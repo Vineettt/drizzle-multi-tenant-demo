@@ -9,6 +9,7 @@
     "db:generate:tenant": "drizzle-kit generate --config=./db/drizzle.config.tenant.ts",
     "db:migrate": "tsx db/scripts/migrate-public.ts",
     "db:migrate:tenants": "tsx db/scripts/migrate-tenants.ts",
+    "db:migrate:tenant": "tsx db/scripts/migrate-tenant.ts",
     "db:create:tenant": "tsx db/scripts/create-tenant.ts",
     "db:demo:tenant": "tsx db/scripts/demo-tenant-schema.ts",
     "db:list:tenants": "tsx db/scripts/list-tenants.ts",

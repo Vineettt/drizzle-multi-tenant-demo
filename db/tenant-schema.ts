@@ -4,7 +4,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import * as schemaPublic from './schema-public';
 import path from 'path';
 import { applyMigrations } from './migration-utils';
-import { escapeSchemaName, createPostgresClient } from './script-utils';
+import { escapeSchemaName, createPostgresClient, getTablesInSchema, tableExistsInSchema } from './script-utils';
 
 if (!process.env.DATABASE_URL) {
   throw new Error('DATABASE_URL environment variable is required');
@@ -77,36 +77,21 @@ export async function createTenantSchemaWithMigrations(
     });
     
     // Check what tables exist in the tenant schema
-    const tablesInSchema = await client`
-      SELECT table_name 
-      FROM information_schema.tables 
-      WHERE table_schema = ${schemaName}
-      ORDER BY table_name
-    `;
-    console.log(`Tables in schema ${schemaName}:`, tablesInSchema.map((t: any) => t.table_name));
+    const tablesInSchema = await getTablesInSchema(client, schemaName, []);
+    console.log(`Tables in schema ${schemaName}:`, tablesInSchema);
     
     // Verify dummy_table was created in tenant schema
-    const tableCheck = await client`
-      SELECT EXISTS(
-        SELECT 1 FROM information_schema.tables 
-        WHERE table_schema = ${schemaName} AND table_name = 'dummy_table'
-      )
-    `;
+    const tableExists = await tableExistsInSchema(client, schemaName, 'dummy_table');
     
-    if (!tableCheck[0].exists) {
+    if (!tableExists) {
       // Check if table exists in public schema (wrong location)
-      const publicTableCheck = await client`
-        SELECT EXISTS(
-          SELECT 1 FROM information_schema.tables 
-          WHERE table_schema = 'public' AND table_name = 'dummy_table'
-        )
-      `;
+      const publicTableExists = await tableExistsInSchema(client, 'public', 'dummy_table');
       
       const errorMsg = `dummy_table was not created in tenant schema ${schemaName}. ` +
         `Migration execution may have failed. ` +
-        `Tables found in schema: ${tablesInSchema.map((t: any) => t.table_name).join(', ')}`;
+        `Tables found in schema: ${tablesInSchema.join(', ')}`;
       
-      if (publicTableCheck[0].exists) {
+      if (publicTableExists) {
         throw new Error(errorMsg + ' Note: dummy_table exists in public schema instead.');
       }
       

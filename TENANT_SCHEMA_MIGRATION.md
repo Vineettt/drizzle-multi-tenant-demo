@@ -90,11 +90,24 @@ Migrates all tenant schemas listed in `schema_tracker`:
 pnpm db:create:tenant demo_tenant_001
 ```
 
-### Migrating All Tenant Schemas
+### Migrating Tenant Schemas
+
+**Migrate a single tenant (recommended for testing):**
+
+```bash
+pnpm db:migrate:tenant demo_tenant_001
+```
+
+**Migrate all tenant schemas:**
 
 ```bash
 pnpm db:migrate:tenants
 ```
+
+**Testing workflow:**
+1. Test migration on a single tenant first: `pnpm db:migrate:tenant test_tenant_001`
+2. Verify the migration works correctly
+3. Apply to all tenants: `pnpm db:migrate:tenants`
 
 ### Running Demo
 
@@ -143,11 +156,24 @@ pnpm db:generate:tenant   # Only tenant schema migrations
 pnpm db:migrate
 ```
 
-### 4. Apply to All Tenant Schemas
+### 4. Apply to Tenant Schemas
+
+**Option A: Apply to a single tenant (recommended for testing)**
+
+```bash
+pnpm db:migrate:tenant demo_tenant_001
+```
+
+**Option B: Apply to all tenant schemas**
 
 ```bash
 pnpm db:migrate:tenants
 ```
+
+**Testing workflow:**
+1. Test migration on a single tenant first: `pnpm db:migrate:tenant test_tenant_001`
+2. Verify the migration works correctly
+3. Apply to all tenants: `pnpm db:migrate:tenants`
 
 ## How search_path Works
 
@@ -210,6 +236,44 @@ INSERT INTO schema_tracker (name) VALUES ('tenant_name');
 DATABASE_URL=postgresql://user:password@localhost:5432/database_name
 ```
 
+### Migration Mismatch
+
+**Error**: `Migration mismatch: Missing migrations: 0001_xxx`
+
+**Solution**: The schema is missing some migrations. Apply them:
+```bash
+pnpm db:migrate:tenant <schema_name>
+```
+
+### Orphaned Schemas
+
+**Issue**: Health check reports orphaned schemas
+
+**What are orphaned schemas?**
+Schemas that exist in the PostgreSQL database but are not tracked in `schema_tracker` table.
+
+**How are they detected?**
+1. Health check queries all schemas in the database (excluding system schemas)
+2. Compares against schemas listed in `schema_tracker`
+3. Any schema in database but not in tracker is marked as orphaned
+
+**Common causes:**
+- Schema created manually without using `db:create:tenant`
+- Schema removed from tracker but not dropped from database
+- Legacy schemas from before tracking was implemented
+- Failed operations (schema created but tracker insert failed)
+
+**Solutions:**
+- **If schema should be tracked**: Add it to tracker manually:
+  ```sql
+  INSERT INTO schema_tracker (name) VALUES ('orphaned_schema_name');
+  ```
+- **If schema should be removed**: Drop it:
+  ```bash
+  pnpm db:drop:tenant orphaned_schema_name
+  ```
+- **If schema is legacy**: Investigate and decide whether to track or remove
+
 ## Error Recovery
 
 ### Failed Schema Creation
@@ -248,23 +312,88 @@ db/
 ├── schema-tenant.ts      # Tenant schema table definitions (dummy_table)
 ├── schema.ts             # Combined schema exports
 ├── tenant-schema.ts      # Core tenant functions
+├── migration-utils.ts    # Migration execution utilities (applyMigrations)
+├── script-utils.ts       # Shared script utilities (client, validation, migrations)
 ├── db.ts                 # Database connection
 ├── index.ts              # Exports
 ├── drizzle.config.public.ts  # Drizzle config for public schema
 ├── drizzle.config.tenant.ts  # Drizzle config for tenant schemas
 ├── migrations/           # Migration files
 │   ├── public/           # Public schema migrations
-│   │   └── *.sql        # Generated migrations for schema_tracker
+│   │   ├── *.sql        # Generated migrations for schema_tracker
+│   │   └── meta/        # Migration metadata (_journal.json)
 │   └── tenant/           # Tenant schema migrations
-│       └── *.sql        # Generated migrations for tenant tables
+│       ├── *.sql        # Generated migrations for tenant tables
+│       └── meta/        # Migration metadata (_journal.json)
 └── scripts/
     ├── migrate-public.ts     # Migrate public schema
     ├── migrate-tenants.ts    # Migrate all tenants
+    ├── migrate-tenant.ts     # Migrate single tenant
     ├── create-tenant.ts      # Create new tenant
     ├── demo-tenant-schema.ts # Demo script
     ├── list-tenants.ts       # List all tenant schemas
     ├── drop-tenant.ts        # Drop tenant schema
     └── health-check.ts       # Health check script
+```
+
+## Health Check
+
+The health check (`pnpm db:health:check`) verifies the integrity of all tenant schemas:
+
+### What It Checks
+
+1. **Schema Existence**
+   - Verifies each tracked schema exists in the database
+   - Reports schemas tracked but missing from database
+
+2. **Table Existence**
+   - Checks that required tables (e.g., `dummy_table`) exist in each schema
+   - Ensures basic schema structure is present
+
+3. **Migration Status** (Most Important)
+   - Reads expected migrations from `db/migrations/tenant/meta/_journal.json`
+   - Gets applied migrations from each schema's `__drizzle_migrations` table
+   - Compares expected vs applied migrations
+   - **Detects missing migrations**: Schemas that haven't applied all migrations
+   - **Detects extra migrations**: Schemas with unexpected migrations
+   - **Ensures consistency**: All tenants should have identical migration sets
+
+4. **Orphaned Schemas**
+   - Finds schemas that exist in database but aren't tracked
+   - Helps identify manual schema creation or incomplete cleanup
+
+### Why Migration Comparison?
+
+Instead of checking individual columns, the health check compares migrations because:
+- **Single source of truth**: Migration journal defines what should be applied
+- **Automatic validation**: If migrations match, schema structure is guaranteed correct
+- **Detects drift**: Identifies tenants that are out of sync
+- **Simpler**: No need to maintain separate column definitions
+- **Reliable**: Ensures all tenants have identical schema structure
+
+### Example Output
+
+```
+=== Tenant Schema Health Check ===
+
+Found 3 tracked schema(s)
+
+Expected tenant migrations: 1
+  0000_normal_smasher
+
+✓ tenant_001: All 1 migration(s) applied
+✓ tenant_002: All 1 migration(s) applied
+✗ tenant_003: Missing migrations: 0000_normal_smasher
+
+Checking for orphaned schemas...
+Found 1 orphaned schema(s):
+  - legacy_tenant_001
+
+=== Health Check Summary ===
+Total tracked schemas: 3
+Healthy: 2
+Unhealthy: 1
+Orphaned: 1
 ```
 
 ## Commands Reference
@@ -291,7 +420,7 @@ pnpm db:list:tenants
 # Drop a tenant schema
 pnpm db:drop:tenant <schema_name>
 
-# Health check all tenant schemas
+# Health check all tenant schemas (verifies migrations match)
 pnpm db:health:check
 
 # Run demo

@@ -76,6 +76,18 @@ Apply pending migrations to all tenant schemas listed in `schema_tracker`.
 pnpm db:migrate:tenants
 ```
 
+#### `pnpm db:migrate:tenant <schema_name>`
+Apply pending migrations to a specific tenant schema. Useful for testing migrations on a single tenant before applying to all.
+
+```bash
+pnpm db:migrate:tenant demo_tenant_001
+```
+
+**Use cases:**
+- Test migrations on a single tenant before applying to all
+- Debug migration issues for a specific tenant
+- Apply migrations to a tenant that was created before new migrations were generated
+
 ### Tenant Management
 
 #### `pnpm db:create:tenant <schema_name>`
@@ -113,11 +125,18 @@ Verify all tenant schemas are healthy and up-to-date.
 pnpm db:health:check
 ```
 
-Checks:
-- Schema exists in database
-- Required tables exist in schema
-- Migrations are up-to-date
-- Orphaned schemas (exist in DB but not tracked)
+**Health Checks:**
+- **Schema existence**: Verifies each tracked schema exists in the database
+- **Table existence**: Checks that required tables (e.g., `dummy_table`) exist
+- **Migration status**: Compares applied migrations against expected migrations from journal
+  - Detects missing migrations (schemas that haven't applied all migrations)
+  - Detects extra migrations (schemas with unexpected migrations)
+  - Ensures all tenants have identical schema structure
+- **Orphaned schemas**: Identifies schemas that exist in the database but are not tracked in `schema_tracker`
+
+**Exit codes:**
+- `0`: All schemas are healthy
+- `1`: Issues found (unhealthy schemas or orphaned schemas)
 
 ### Development Tools
 
@@ -198,10 +217,13 @@ pnpm db:generate
 # 3. Apply to public schema
 pnpm db:migrate
 
-# 4. Apply to all tenant schemas
+# 4. Test on a single tenant first (recommended)
+pnpm db:migrate:tenant test_tenant_001
+
+# 5. Apply to all tenant schemas
 pnpm db:migrate:tenants
 
-# 5. Verify everything is healthy
+# 6. Verify everything is healthy
 pnpm db:health:check
 ```
 
@@ -213,17 +235,24 @@ db/
 ├── schema-tenant.ts         # Tenant schema definitions (dummy_table)
 ├── schema.ts                # Combined schema exports
 ├── tenant-schema.ts         # Core tenant management functions
+├── migration-utils.ts       # Migration execution utilities (applyMigrations)
+├── script-utils.ts          # Shared script utilities (client, validation, migrations)
 ├── db.ts                    # Database connection
 ├── index.ts                 # Package exports
 ├── drizzle.config.public.ts # Drizzle config for public schema
 ├── drizzle.config.tenant.ts # Drizzle config for tenant schemas
 ├── migrations/
 │   ├── public/              # Public schema migrations
+│   │   ├── *.sql           # Generated migration files
+│   │   └── meta/           # Migration metadata (_journal.json)
 │   └── tenant/              # Tenant schema migrations
+│       ├── *.sql           # Generated migration files
+│       └── meta/           # Migration metadata (_journal.json)
 └── scripts/
     ├── migrate-public.ts    # Public migration script
-    ├── migrate-tenants.ts   # Tenant migration script
-    ├── create-tenant.ts    # Create tenant script
+    ├── migrate-tenants.ts   # Migrate all tenants script
+    ├── migrate-tenant.ts    # Migrate single tenant script
+    ├── create-tenant.ts     # Create tenant script
     ├── list-tenants.ts      # List tenants script
     ├── drop-tenant.ts       # Drop tenant script
     ├── health-check.ts      # Health check script
@@ -256,6 +285,14 @@ INSERT INTO schema_tracker (name) VALUES ('schema_name');
 
 ### Migration Fails
 Check logs for specific errors. The migration script continues processing other schemas even if one fails.
+
+### Health Check Issues
+
+**Migration mismatch**: A tenant schema has missing or extra migrations
+- **Solution**: Run `pnpm db:migrate:tenant <schema_name>` to sync migrations
+
+**Orphaned schemas**: Schemas exist in database but aren't tracked
+- **Solution**: Either add to tracker (`INSERT INTO schema_tracker`) or drop the schema (`pnpm db:drop:tenant`)
 
 ### Invalid Schema Name
 Schema names must:

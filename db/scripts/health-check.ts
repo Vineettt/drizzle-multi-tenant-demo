@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import { db } from '../db';
 import { schemaTracker } from '../schema';
-import { createPostgresClient, handleScriptError, setSearchPath } from '../script-utils';
+import { createPostgresClient, handleScriptError, setSearchPath, schemaExistsInDatabase, tableExistsInSchema, getExpectedMigrations, getAppliedMigrations } from '../script-utils';
+import path from 'path';
 
 async function healthCheck() {
   const client = createPostgresClient();
@@ -21,18 +22,28 @@ async function healthCheck() {
 
     console.log(`Found ${trackedSchemas.length} tracked schema(s)\n`);
 
+    // Get expected migrations from journal
+    const tenantMigrationsFolder = path.join(process.cwd(), 'db', 'migrations', 'tenant');
+    let expectedMigrations: string[] = [];
+    try {
+      expectedMigrations = getExpectedMigrations(tenantMigrationsFolder);
+      console.log(`Expected tenant migrations: ${expectedMigrations.length}`);
+      if (expectedMigrations.length > 0) {
+        console.log(`  ${expectedMigrations.join(', ')}\n`);
+      } else {
+        console.log('  (no migrations)\n');
+      }
+    } catch (error) {
+      console.warn(`Warning: Could not read migration journal: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+
     // Check each tracked schema
     for (const { name } of trackedSchemas) {
       try {
         // Check if schema exists
-        const schemaExists = await client`
-          SELECT EXISTS(
-            SELECT 1 FROM information_schema.schemata 
-            WHERE schema_name = ${name}
-          )
-        `;
+        const schemaExists = await schemaExistsInDatabase(client, name);
 
-        if (!schemaExists[0].exists) {
+        if (!schemaExists) {
           results.unhealthySchemas.push({
             schema: name,
             issue: 'Schema does not exist in database',
@@ -43,14 +54,9 @@ async function healthCheck() {
 
         // Check if dummy_table exists in schema
         await setSearchPath(client, name);
-        const tableExists = await client`
-          SELECT EXISTS(
-            SELECT 1 FROM information_schema.tables 
-            WHERE table_schema = ${name} AND table_name = 'dummy_table'
-          )
-        `;
+        const tableExists = await tableExistsInSchema(client, name, 'dummy_table');
 
-        if (!tableExists[0].exists) {
+        if (!tableExists) {
           results.unhealthySchemas.push({
             schema: name,
             issue: 'dummy_table does not exist',
@@ -59,17 +65,12 @@ async function healthCheck() {
           continue;
         }
 
-        // Check migration status (verify migrations table exists and is up to date)
+        // Check migration status - verify all expected migrations are applied
         try {
           // Check if __drizzle_migrations table exists in tenant schema
-          const migrationsTableExists = await client`
-            SELECT EXISTS(
-              SELECT 1 FROM information_schema.tables 
-              WHERE table_schema = ${name} AND table_name = '__drizzle_migrations'
-            )
-          `;
+          const migrationsTableExists = await tableExistsInSchema(client, name, '__drizzle_migrations');
           
-          if (!migrationsTableExists[0].exists) {
+          if (!migrationsTableExists) {
             results.unhealthySchemas.push({
               schema: name,
               issue: '__drizzle_migrations table does not exist',
@@ -77,16 +78,37 @@ async function healthCheck() {
             console.log(`✗ ${name}: Migration tracking table missing`);
             continue;
           }
-          
-          // Check migration count matches expected (basic health check)
-          // Count applied migrations to verify schema is up to date
-          const appliedMigrations = await client.unsafe(`
-            SELECT COUNT(*) as count FROM "${name}"."__drizzle_migrations"
-          `);
-          
-          // Basic check: if migrations table exists and has entries, assume healthy
-          // Detailed migration check would require comparing with journal, but that's complex
-          // The existence check is sufficient for health check purposes
+
+          // Get applied migrations for this schema
+          const appliedMigrations = await getAppliedMigrations(client, name);
+          const appliedSet = new Set(appliedMigrations);
+          const expectedSet = new Set(expectedMigrations);
+
+          // Check for missing migrations
+          const missingMigrations = expectedMigrations.filter((m) => !appliedSet.has(m));
+          // Check for extra migrations (shouldn't happen, but good to detect)
+          const extraMigrations = appliedMigrations.filter((m) => !expectedSet.has(m));
+
+          if (missingMigrations.length > 0 || extraMigrations.length > 0) {
+            const issues: string[] = [];
+            if (missingMigrations.length > 0) {
+              issues.push(`Missing migrations: ${missingMigrations.join(', ')}`);
+            }
+            if (extraMigrations.length > 0) {
+              issues.push(`Extra migrations: ${extraMigrations.join(', ')}`);
+            }
+            results.unhealthySchemas.push({
+              schema: name,
+              issue: `Migration mismatch: ${issues.join('; ')}`,
+            });
+            console.log(`✗ ${name}: ${issues.join('; ')}`);
+            continue;
+          }
+
+          // All migrations match
+          if (expectedMigrations.length > 0) {
+            console.log(`✓ ${name}: All ${expectedMigrations.length} migration(s) applied`);
+          }
         } catch (migrationError) {
           results.unhealthySchemas.push({
             schema: name,
