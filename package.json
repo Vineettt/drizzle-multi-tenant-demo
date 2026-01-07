@@ -1,0 +1,39 @@
+{
+  "name": "drizzle_demo",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "db:generate": "drizzle-kit generate --config=./db/drizzle.config.public.ts && drizzle-kit generate --config=./db/drizzle.config.tenant.ts",
+    "db:generate:public": "drizzle-kit generate --config=./db/drizzle.config.public.ts",
+    "db:generate:tenant": "drizzle-kit generate --config=./db/drizzle.config.tenant.ts",
+    "db:migrate": "tsx db/scripts/migrate-public.ts",
+    "db:migrate:tenants": "tsx db/scripts/migrate-tenants.ts",
+    "db:create:tenant": "tsx db/scripts/create-tenant.ts",
+    "db:demo:tenant": "tsx db/scripts/demo-tenant-schema.ts",
+    "db:list:tenants": "tsx db/scripts/list-tenants.ts",
+    "db:drop:tenant": "tsx db/scripts/drop-tenant.ts",
+    "db:health:check": "tsx db/scripts/health-check.ts",
+    "db:studio": "drizzle-kit studio --config=./db/drizzle.config.public.ts",
+    "db:studio:tenant": "drizzle-kit studio --config=./db/drizzle.config.tenant.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.27.0",
+  "dependencies": {
+    "drizzle-orm": "^0.45.1",
+    "dotenv": "^16.4.7",
+    "postgres": "^3.4.8",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.3",
+    "@types/uuid": "^11.0.0",
+    "drizzle-kit": "^0.31.8",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
