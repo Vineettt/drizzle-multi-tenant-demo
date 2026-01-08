@@ -2,6 +2,12 @@
 
 A demonstration project showcasing **two different multi-tenancy approaches** using Drizzle ORM and PostgreSQL.
 
+## Quick Navigation
+
+- [Multi-Schema Approach](#multi-schema-approach-db) - Schema-level isolation with separate schemas per tenant
+- [Row-Level Security (RLS) Approach](#row-level-security-rls-approach-db-rls) - Row-level isolation with shared schema
+- [Comparison](#comparison) - Feature comparison and use case recommendations
+
 ## Overview
 
 This project contains **two independent multi-tenancy implementations**:
@@ -278,37 +284,58 @@ DATABASE_URL_APP=postgresql://app_owner:password@ep-xxx-xxx.region.aws.neon.tech
   - Neon restricts schema creation to owner accounts
   - Owner credentials are required for migrations
   - Connection string format: `postgresql://[user]:[password]@[host]/[database]?sslmode=require`
+  - Neon uses SSL connections by default - always include `?sslmode=require` in connection strings
   
 - **DATABASE_URL_APP:** Use `app_owner` role after running setup script, or use a Neon branch connection
-  - The `app_owner` role respects RLS policies
+  - The `app_owner` role respects RLS policies (created via setup script)
   - You can also use a Neon branch connection string for application queries
 
 ### Setup
 
 #### 1. Neon Database Setup
 
-**Create roles and permissions:**
+**Create `app_owner` role and permissions:**
+
+The setup script creates the `app_owner` role that will be used for application queries. The Neon database owner credentials are used for migrations and are not created by this script.
+
+**Setup files:**
+- [`db-rls/scripts/setup-postgres.sql`](./db-rls/scripts/setup-postgres.sql) - Creates the `app_owner` role and grants permissions
+- [`db-rls/scripts/verify-setup.sql`](./db-rls/scripts/verify-setup.sql) - Verifies the setup is correct
 
 1. Connect to your Neon database using owner credentials:
    ```bash
    psql "postgresql://neondb_owner:password@ep-xxx-xxx.region.aws.neon.tech/neondb?sslmode=require"
    ```
 
-2. Edit `db-rls/scripts/setup-postgres.sql`:
-   - Replace `'your_password_here'` with secure passwords for both roles
+2. Edit [`db-rls/scripts/setup-postgres.sql`](./db-rls/scripts/setup-postgres.sql):
+   - Replace `'your_password_here'` with a secure password for the `app_owner` role
    - Replace `'your_database'` with your Neon database name (usually `neondb`)
 
-3. Run the setup script:
+3. Run the setup script to create the `app_owner` role:
    ```bash
    psql "postgresql://neondb_owner:password@ep-xxx-xxx.region.aws.neon.tech/neondb?sslmode=require" -f db-rls/scripts/setup-postgres.sql
    ```
+   
+   This script will:
+   - Create the `app_owner` role with login privileges
+   - Grant necessary permissions on the `public` schema
+   - Set up default privileges for future tables
+   - Configure the role to respect RLS policies
 
-4. Verify setup:
+4. Verify setup using [`db-rls/scripts/verify-setup.sql`](./db-rls/scripts/verify-setup.sql):
    ```bash
    psql "postgresql://neondb_owner:password@ep-xxx-xxx.region.aws.neon.tech/neondb?sslmode=require" -f db-rls/scripts/verify-setup.sql
    ```
+   
+   This will verify that:
+   - The `app_owner` role exists
+   - Permissions are correctly configured
+   - RLS policies can be enforced
 
-**Note:** Neon uses SSL connections by default. Always include `?sslmode=require` in connection strings.
+5. Update your `.env` file with the `app_owner` credentials:
+   ```bash
+   DATABASE_URL_APP=postgresql://app_owner:your_password_here@ep-xxx-xxx.region.aws.neon.tech/neondb?sslmode=require
+   ```
 
 #### 2. Generate Migrations
 
